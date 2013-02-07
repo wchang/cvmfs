@@ -117,7 +117,7 @@ Supported Commands:
                 Start to edit a repository
   snapshot      <fully qualified name>
                 Synchronize a Stratum 1 replica with the Stratum 0 source
-  list:         List available repositories
+  list          List available repositories
 "
 
 
@@ -203,7 +203,7 @@ is_local_upstream() {
 
 
 has_selinux() {
-  [ -f /selinux/enforce ]
+  [ -f /selinux/enforce ] && [ $(cat /selinux/enforce) -ne 0 ]
 }
 
 
@@ -361,10 +361,34 @@ get_expiry() {
 }
 
 
-get_local_upstream() {
+check_upstream_type() {
+  local upstream=$1
+  local needle_type=$2
+
+  if [ x$(echo "$upstream" | cut -d: -f1) = x"$needle_type" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+is_local_upstream() {
+  local upstream=$1
+  check_upstream_type $upstream "local"
+  return $?
+}
+
+is_riak_upstream() {
+  local upstream=$1
+  check_upstream_type $upstream "riak"
+  return $?
+}
+
+
+get_upstream_path() {
   local upstream=$1
 
-  echo "$upstream" | cut -d: -f2
+  echo "$upstream" | cut -d: -f3-
 }
 
 
@@ -436,6 +460,7 @@ create_repository_skeleton() {
     mkdir ${directory}/data/$(printf "%02x" $i)
     i=$(($i+1))
   done
+  mkdir ${directory}/data/txn
   chown -R $user $directory
   if has_selinux; then
     chcon -Rv --type=httpd_sys_content_t $directory
@@ -500,7 +525,7 @@ mkfs() {
 
   # default values
   [ x"$stratum0" = x ] && stratum0="http://localhost/cvmfs/$name"
-  [ x"$upstream" = x ] && upstream="local:/srv/cvmfs/$name"
+  [ x"$upstream" = x ] && upstream="local:/srv/cvmfs/$name/data/txn:/srv/cvmfs/$name"
 
   # sanity checks
   check_repository_existence $name && die "The repository $name already exists"
@@ -513,11 +538,12 @@ mkfs() {
   local rdonly_dir="${spool_dir}/rdonly"
   local temp_dir="${spool_dir}/tmp"
   local cache_dir="${spool_dir}/cache"
-  local pipe_paths="${spool_dir}/paths"
-  local pipe_digests="${spool_dir}/digests"
   local repository_dir;
+  local riak_urls;
   if is_local_upstream $upstream; then
-    repository_dir=$(get_local_upstream $upstream)
+    repository_dir=$(get_upstream_path $upstream)
+  elif is_riak_upstream $upstream; then
+    riak_urls=$(get_upstream_path $upstream)
   fi
 
   # more sanity checks
@@ -540,6 +566,10 @@ CVMFS_UNION_DIR=/cvmfs/$name
 CVMFS_SPOOL_DIR=$spool_dir
 CVMFS_STRATUM0=$stratum0
 CVMFS_UPSTREAM_STORAGE=$upstream
+CVMFS_USE_FILE_CHUNKING=true
+CVMFS_MIN_CHUNK_SIZE=4194304
+CVMFS_AVG_CHUNK_SIZE=8388608
+CVMFS_MAX_CHUNK_SIZE=16777216
 EOF
   cat > /etc/${APACHE}/conf.d/cvmfs.${name}.conf << EOF
 # Created by cvmfs_server.  Don't touch.
@@ -588,7 +618,13 @@ Alias /cvmfs/$name ${repository_dir}
     ExpiresByType application/x-cvmfs "access plus 1 minutes"
 </Directory>
 EOF
+  elif is_riak_upstream $upstream; then
+    cat > /etc/cvmfs/repositories.d/${name}/riak.conf << EOF
+# Created by cvmfs_server.
+CVMFS_RIAK_URLS=$riak_urls
+EOF
   fi
+
   cat > /etc/cvmfs/repositories.d/${name}/client.conf << EOF
 # Created by cvmfs_server.  Don't touch.
 CVMFS_CACHE_BASE=$cache_dir
@@ -619,7 +655,6 @@ EOF
 
   echo -n "Create CernVM-FS Storage... "
   mkdir -p /cvmfs/$name $scratch_dir $rdonly_dir $temp_dir $cache_dir
-  mkfifo -m 0660 $pipe_paths $pipe_digests
   chown -R $cvmfs_user /cvmfs/$name $spool_dir
   if is_local_upstream $upstream; then
     create_repository_skeleton $repository_dir $cvmfs_user > /dev/null
@@ -627,20 +662,28 @@ EOF
   reload_apache > /dev/null
   echo "done"
 
-  local spooler_definition="${upstream},${pipe_paths},${pipe_digests}"
+  local spooler_definition="${upstream}"
   echo -n "Create Initial Repository... "
   create_whitelist $name $cvmfs_user $spooler_definition $temp_dir > /dev/null
   sudo -H -u $cvmfs_user sh -c "cvmfs_swissknife create \
     -t $temp_dir \
     -r $spooler_definition \
-    -o ${temp_dir}/new_manifest" > /dev/null
+    -o ${temp_dir}/new_manifest"
+  if [ $? -ne 0 ]; then
+    echo "fail!"
+    return
+  fi
   sudo -H -u $cvmfs_user sh -c "cvmfs_swissknife sign \
     -c /etc/cvmfs/keys/${name}.crt \
     -k /etc/cvmfs/keys/${name}.key \
     -n $name \
     -m ${temp_dir}/new_manifest \
     -t $temp_dir \
-    -r $spooler_definition" > /dev/null
+    -r $spooler_definition"
+  if [ $? -ne 0 ]; then
+    echo "fail!"
+    return
+  fi
   echo "done"
 
   echo -n "Mounting CernVM-FS Storage... "
@@ -726,17 +769,15 @@ add_replica() {
   fi
 
   # default values
-  [ x"$upstream" = x ] && upstream="local:/srv/cvmfs/$name"
+  [ x"$upstream" = x ] && upstream="local:/srv/cvmfs/$name/data/txn:/srv/cvmfs/$name"
 
   # additional configuration
   local cvmfs_user=`get_cvmfs_owner $name $owner`
   local spool_dir="/var/spool/cvmfs/${name}"
-  local pipe_paths="${spool_dir}/paths"
-  local pipe_digests="${spool_dir}/digests"
   local temp_dir="${spool_dir}/tmp"
   local repository_dir;
   if is_local_upstream $upstream; then
-    repository_dir=$(get_local_upstream $upstream)
+    repository_dir=$(get_upstream_path $upstream)
   fi
 
   # additional sanity checks
@@ -795,13 +836,10 @@ EOF
   mkdir -p $spool_dir
   if [ x"$repository_dir" != x ]; then
     create_repository_skeleton $repository_dir $cvmfs_user > /dev/null
-    mkdir $repository_dir/data/txn
-    chown $cvmfs_user $repository_dir/data/txn
     ln -s $repository_dir/data/txn $temp_dir
   else
     mkdir -p $temp_dir
   fi
-  mkfifo -m 0660 $pipe_paths $pipe_digests
   chown -R $cvmfs_user $spool_dir
   reload_apache > /dev/null
   echo "done"
@@ -886,12 +924,14 @@ rmfs() {
   echo done
 
   if is_local_upstream $upstream; then
-    local repository_dir=$(get_local_upstream $upstream)
+    local repository_dir=$(get_upstream_path $upstream)
     if [ "x"$repository_dir != x ]; then
       echo -n "Removing repository storage... "
       rm -rf $repository_dir
       echo "done"
     fi
+  elif is_riak_upstream $upstream; then
+    echo "currently Riak Storage is not wiped! TBD."
   fi
 
   echo -n "Removing keys and configuration... "
@@ -933,7 +973,7 @@ resign() {
 
   # do it!
   create_whitelist $name $CVMFS_USER \
-      ${CVMFS_UPSTREAM_STORAGE},${CVMFS_SPOOL_DIR}/paths,${CVMFS_SPOOL_DIR}/digests \
+      ${CVMFS_UPSTREAM_STORAGE} \
       ${CVMFS_SPOOL_DIR}/tmp
 }
 
@@ -974,9 +1014,6 @@ Copy /etc/cvmfs/keys/${name}.pub to the client"
 }
 
 
-################################################################################
-
-
 check() {
   local name
   local upstream
@@ -991,8 +1028,15 @@ check() {
   
   # get repository information
   . /etc/cvmfs/repositories.d/$name/server.conf
+
+  # more sanity checks
+  if is_riak_upstream $upstream; then
+    echo "checking of Riak storage is not supported. TBD"
+    return
+  fi
+
   upstream=$CVMFS_UPSTREAM_STORAGE
-  repository_dir=$(get_local_upstream $upstream)
+  repository_dir=$(get_upstream_path $upstream)
 
   # do it!
   [ "x$CVMFS_LOG_LEVEL" != x ] && log_level="-l $CVMFS_LOG_LEVEL"
@@ -1009,6 +1053,10 @@ list() {
   for repository in /etc/cvmfs/repositories.d/*; do
     if [ "x$repository" = "x/etc/cvmfs/repositories.d/*" ]; then
       return 0
+    fi
+    if [ -f $repository ]; then
+      echo "Warning: unexpected file '$repository' in directory /etc/cvmfs/repositories.d/"
+      continue
     fi
     . ${repository}/server.conf
     local name=$(basename $repository)
@@ -1198,16 +1246,22 @@ publish() {
     -c ${spool_dir}/rdonly \
     -t ${spool_dir}/tmp \
     -b $base_hash \
-    -r ${upstream},${spool_dir}/paths,${spool_dir}/digests \
+    -r ${upstream} \
     -w $stratum0 \
     -o ${spool_dir}/tmp/manifest \
     $log_level"
+  if [ "x$CVMFS_USE_FILE_CHUNKING" = "xtrue" ]; then
+    sync_command="$sync_command -p \
+     -l $CVMFS_MIN_CHUNK_SIZE \
+     -a $CVMFS_AVG_CHUNK_SIZE \
+     -h $CVMFS_MAX_CHUNK_SIZE"
+  fi
   local sign_command="$swissknife sign -c /etc/cvmfs/keys/${name}.crt \
     -k /etc/cvmfs/keys/${name}.key \
     -n $name \
     -m ${spool_dir}/tmp/manifest \
     -t ${spool_dir}/tmp \
-    -r ${upstream},${spool_dir}/paths,${spool_dir}/digests"
+    -r ${upstream}"
 
   $user_shell "$sync_command" || die "Synchronization failed\n\nExecuted Command:\n$sync_command"
   $user_shell "$sign_command" || die "Signing failed\n\nExecuted Command:\n$sign_command"
@@ -1273,7 +1327,7 @@ snapshot() {
 
   $user_shell "cvmfs_swissknife pull -m $name \
     -u $stratum0 \
-    -r ${upstream},${spool_dir}/paths,${spool_dir}/digests \
+    -r ${upstream} \
     -x ${spool_dir}/tmp \
     -k $public_key \
     -n $num_workers \

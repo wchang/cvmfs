@@ -43,8 +43,13 @@ string *path_debug = NULL;
 #endif
 const char *module_names[] = { "unknown", "cache", "catalog", "sql", "cvmfs",
   "hash", "download", "compress", "quota", "talk", "monitor", "lru",
+<<<<<<< HEAD
   "fuse stub", "signature", "peers", "fs traversal", "catalog traversal", "nfs maps", "publish",
   "spooler", "dns" };
+=======
+  "fuse stub", "signature", "peers", "fs traversal", "catalog traversal",
+  "nfs maps", "publish", "spooler", "concurrency", "utility" };
+>>>>>>> 44c1047a951c9d6594a9d08c668a12bef2d2f2e2
 int syslog_facility = LOG_USER;
 int syslog_level = LOG_NOTICE;
 char *syslog_prefix = NULL;

@@ -59,10 +59,16 @@ enum LogSource {
   kLogNfsMaps,
   kLogPublish,
   kLogSpooler,
+<<<<<<< HEAD
   kLogDns
+=======
+  kLogConcurrency,
+  kLogUtility
+>>>>>>> 44c1047a951c9d6594a9d08c668a12bef2d2f2e2
 };
 
 const int kLogVerboseMsg = kLogStdout | kLogShowSource | kLogVerbose;
+const int kLogWarning    = kLogStdout | kLogShowSource | kLogNormal;
 
 void SetLogSyslogLevel(const int level);
 int GetLogSyslogLevel();

@@ -21,6 +21,10 @@
 #include "duplex_sqlite3.h"
 #include "util.h"
 
+namespace swissknife {
+  class CommandCheck;
+}
+
 namespace catalog {
 
 class AbstractCatalogManager;
@@ -90,7 +94,6 @@ struct Counters {
   uint64_t subtree_nested;
 };
 
-
 /**
  * This class wraps a catalog database and provides methods
  * to query for directory entries.
@@ -137,6 +140,12 @@ struct Counters {
   bool AllChunksBegin();
   bool AllChunksNext(hash::Any *hash, ChunkTypes *type);
   bool AllChunksEnd();
+
+  inline bool GetFileChunks(const PathString &path, FileChunks *chunks) const {
+    return GetMd5FileChunks(hash::Md5(path.GetChars(), path.GetLength()),
+                            chunks);
+  }
+  bool GetMd5FileChunks(const hash::Md5 &md5path, FileChunks *chunks) const;
 
   uint64_t GetTTL() const;
   uint64_t GetRevision() const;
@@ -188,6 +197,7 @@ struct Counters {
   Catalog* FindSubtree(const PathString &path) const;
   Catalog* FindChild(const PathString &mountpoint) const;
 
+  friend class swissknife::CommandCheck;
   inline const Database &database() const { return *database_; }
   inline void set_parent(Catalog *catalog) { parent_ = catalog; }
 
@@ -218,12 +228,13 @@ struct Counters {
   InodeRange inode_range_;
   uint64_t max_row_id_;
 
-  SqlListing *sql_listing_;
-  SqlLookupPathHash *sql_lookup_md5path_;
-  SqlLookupInode *sql_lookup_inode_;
-  SqlNestedCatalogLookup *sql_lookup_nested_;
-  SqlNestedCatalogListing *sql_list_nested_;
-  SqlAllChunks *sql_all_chunks_;
+  SqlListing               *sql_listing_;
+  SqlLookupPathHash        *sql_lookup_md5path_;
+  SqlLookupInode           *sql_lookup_inode_;
+  SqlNestedCatalogLookup   *sql_lookup_nested_;
+  SqlNestedCatalogListing  *sql_list_nested_;
+  SqlAllChunks             *sql_all_chunks_;
+  SqlGetFileChunks         *sql_get_file_chunks_;
 };  // class Catalog
 
 Catalog *AttachFreely(const std::string &root_path, const std::string &file);
