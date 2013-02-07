@@ -151,33 +151,6 @@ static void *MainTalk(void *data __attribute__((unused))) {
             }
           }
         }
-      } else if (line.substr(0, 10) == "clear file") {
-        if (quota::GetCapacity() == 0) {
-          Answer(con_fd, "Cache is unmanaged\n");
-        } else {
-          if (line.length() < 12) {
-            Answer(con_fd, "Usage: clear file <path>\n");
-          } else {
-            const string path = line.substr(11);
-            int retval = cvmfs::ClearFile(path);
-            switch (retval) {
-              case 0:
-                Answer(con_fd, "OK\n");
-                break;
-              case -ENOENT:
-                Answer(con_fd, "No such file\n");
-                break;
-              case -EINVAL:
-                Answer(con_fd, "Not a regular file\n");
-                break;
-              default:
-                const string error_str = "Unknown error (" +
-                                         StringifyInt(retval) + ")\n";
-                Answer(con_fd, error_str);
-                break;
-            }
-          }
-        }
       } else if (line == "mountpoint") {
         Answer(con_fd, *cvmfs::mountpoint_ + "\n");
       } else if (line == "remount") {
@@ -344,6 +317,17 @@ static void *MainTalk(void *data __attribute__((unused))) {
           result += "\nLEVELDB Statistics:\n";
           result += nfs_maps::GetStatistics();
         }
+
+        result += "\nNetwork Statistics:\n";
+        result += download::GetStatistics().Print();
+        unsigned proxy_reset_delay;
+        time_t proxy_timestamp_failover;
+        download::GetProxyBackupInfo(&proxy_reset_delay,
+                                     &proxy_timestamp_failover);
+        result += "Backup proxy group: " + ((proxy_timestamp_failover > 0) ?
+          ("Backup since " + StringifyTime(proxy_timestamp_failover, true)) :
+          "Primary");
+        result += "\n\n";
 
         result += "SQlite Statistics:\n";
         sqlite3_status(SQLITE_STATUS_MALLOC_COUNT, &current, &highwater, 0);
