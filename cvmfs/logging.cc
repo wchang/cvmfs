@@ -43,13 +43,8 @@ string *path_debug = NULL;
 #endif
 const char *module_names[] = { "unknown", "cache", "catalog", "sql", "cvmfs",
   "hash", "download", "compress", "quota", "talk", "monitor", "lru",
-<<<<<<< HEAD
-  "fuse stub", "signature", "peers", "fs traversal", "catalog traversal", "nfs maps", "publish",
-  "spooler", "dns" };
-=======
   "fuse stub", "signature", "peers", "fs traversal", "catalog traversal",
-  "nfs maps", "publish", "spooler", "concurrency", "utility" };
->>>>>>> 44c1047a951c9d6594a9d08c668a12bef2d2f2e2
+  "nfs maps", "publish", "spooler", "concurrency", "utility", "dns" };
 int syslog_facility = LOG_USER;
 int syslog_level = LOG_NOTICE;
 char *syslog_prefix = NULL;
@@ -95,7 +90,7 @@ int GetLogSyslogLevel() {
 
 /**
  * Sets the syslog facility to one of local0 .. local7.
- * Falls back to LOG_USER if local_facility is not in [0..7] 
+ * Falls back to LOG_USER if local_facility is not in [0..7]
  */
 void SetLogSyslogFacility(const int local_facility) {
   switch (local_facility) {
@@ -146,7 +141,7 @@ int GetLogSyslogFacility() {
     case LOG_LOCAL6:
       return 6;
     case LOG_LOCAL7:
-      return 7;  
+      return 7;
    default:
       return -1;
   }
